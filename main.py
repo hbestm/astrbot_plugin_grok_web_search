@@ -584,6 +584,37 @@ class GrokSearchPlugin(Star):
             )
         return result
 
+    def _render_sources(
+        self,
+        sources: list,
+        *,
+        header: str,
+        with_snippet: bool,
+    ) -> list[str]:
+        """渲染来源列表，遵循 show_sources / max_sources 配置。"""
+        if not self.config.get("show_sources", False) or not sources:
+            return []
+        max_sources = self.config.get("max_sources", 5)
+        if max_sources > 0:
+            sources = sources[:max_sources]
+        lines = [f"\n{header}:"]
+        for i, src in enumerate(sources, 1):
+            url = src.get("url", "")
+            title = src.get("title", "")
+            if title:
+                if with_snippet:
+                    lines.append(f"  {i}. {title}")
+                    lines.append(f"     {url}")
+                else:
+                    lines.append(f"  {i}. {title}\n     {url}")
+            else:
+                lines.append(f"  {i}. {url}")
+            if with_snippet:
+                snippet = src.get("snippet", "")
+                if snippet:
+                    lines.append(f"     {snippet}")
+        return lines
+
     def _format_result(self, result: dict) -> str:
         """格式化搜索结果为用户友好的消息"""
         if not result.get("ok"):
@@ -594,22 +625,8 @@ class GrokSearchPlugin(Star):
         sources = result.get("sources", [])
         elapsed = result.get("elapsed_ms", 0) / 1000
 
-        show_sources = self.config.get("show_sources", False)
-        max_sources = self.config.get("max_sources", 5)
-
         lines = [content]
-
-        if show_sources and sources:
-            if max_sources > 0:
-                sources = sources[:max_sources]
-            lines.append("\n来源:")
-            for i, src in enumerate(sources, 1):
-                url = src.get("url", "")
-                title = src.get("title", "")
-                if title:
-                    lines.append(f"  {i}. {title}\n     {url}")
-                else:
-                    lines.append(f"  {i}. {url}")
+        lines.extend(self._render_sources(sources, header="来源", with_snippet=False))
 
         # 显示耗时、重试次数和 token 用量
         retry_info = ""
@@ -637,26 +654,10 @@ class GrokSearchPlugin(Star):
         content = result.get("content", "")
         sources = result.get("sources", [])
 
-        show_sources = self.config.get("show_sources", False)
-        max_sources = self.config.get("max_sources", 5)
-
         lines = [f"搜索结果:\n{content}"]
-
-        if show_sources and sources:
-            if max_sources > 0:
-                sources = sources[:max_sources]
-            lines.append("\n参考来源:")
-            for i, src in enumerate(sources, 1):
-                url = src.get("url", "")
-                title = src.get("title", "")
-                snippet = src.get("snippet", "")
-                if title:
-                    lines.append(f"  {i}. {title}")
-                    lines.append(f"     {url}")
-                else:
-                    lines.append(f"  {i}. {url}")
-                if snippet:
-                    lines.append(f"     {snippet}")
+        lines.extend(
+            self._render_sources(sources, header="参考来源", with_snippet=True)
+        )
 
         # 提示主 LLM 使用纯文本格式回复用户
         lines.append("\n[提示: 请使用纯文本格式回复用户，不要使用 Markdown 格式]")
