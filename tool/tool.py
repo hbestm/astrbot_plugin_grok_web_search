@@ -94,6 +94,168 @@ def get_local_time_info() -> str:
     )
 
 
+# ─── 搜索模式参数规范化 ────────────────────────────────
+
+# 合法的搜索深度值
+_VALID_SEARCH_DEPTHS = {"basic", "advanced", "deep"}
+# 合法的时间范围值
+_VALID_TIME_RANGES = {"day", "week", "month", "year"}
+# 合法的主题值
+_VALID_TOPICS = {"general", "news"}
+# search_depth → 模式名映射
+_DEPTH_MODE_MAP = {"basic": "quick", "advanced": "detailed", "deep": "deep"}
+_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def normalize_search_options(
+    search_depth: str = "basic",
+    max_results: int = 7,
+    topic: str = "general",
+    days: int = 0,
+    time_range: str = "",
+    start_date: str = "",
+    end_date: str = "",
+) -> dict[str, object]:
+    """软校验搜索选项，非法值降级为安全默认值。
+
+    Returns:
+        规范化后的选项字典。
+    """
+    # search_depth — 仅允许已知值
+    search_depth = str(search_depth).strip().lower()
+    if search_depth not in _VALID_SEARCH_DEPTHS:
+        search_depth = "basic"
+
+    # max_results — clamp 5-20，非数字降级 7
+    try:
+        max_results = max(5, min(20, int(max_results)))
+    except (ValueError, TypeError):
+        max_results = 7
+
+    # topic — 仅允许已知值
+    topic = str(topic).strip().lower()
+    if topic not in _VALID_TOPICS:
+        topic = "general"
+
+    # days — 0-365，非数字降级 0
+    try:
+        days = max(0, min(365, int(days)))
+    except (ValueError, TypeError):
+        days = 0
+
+    # time_range — 仅允许已知值
+    time_range = str(time_range).strip().lower()
+    if time_range and time_range not in _VALID_TIME_RANGES:
+        time_range = ""
+
+    # 日期格式校验（YYYY-MM-DD）
+    start_date = str(start_date).strip()
+    end_date = str(end_date).strip()
+    if start_date and not _DATE_PATTERN.match(start_date):
+        start_date = ""
+    if end_date and not _DATE_PATTERN.match(end_date):
+        end_date = ""
+
+    return {
+        "search_depth": search_depth,
+        "max_results": max_results,
+        "topic": topic,
+        "days": days,
+        "time_range": time_range,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+
+
+def resolve_search_mode(search_depth: str) -> str:
+    """将 search_depth 映射为模式名（quick / detailed / deep）。"""
+    return _DEPTH_MODE_MAP.get(search_depth, "quick")
+
+
+def resolve_mode_model(
+    mode_model: str,
+    fallback_model: str = "",
+) -> str:
+    """选择具体模型：模式专用模型 > 通用 model > DEFAULT_MODEL。"""
+    return mode_model or fallback_model or DEFAULT_MODEL
+
+
+def resolve_reasoning_params(search_depth: str) -> tuple[str | None, int | None]:
+    """根据 search_depth 返回 (reasoning_effort, reasoning_budget_tokens)。
+
+    basic   → 不开启思考（最快）
+    advanced → 中等思考
+    deep    → 深度思考 + 32k token 预算
+    """
+    if search_depth == "deep":
+        return "high", 32000
+    if search_depth == "advanced":
+        return "medium", None
+    return None, None
+
+
+def build_search_time_constraints(
+    topic: str = "general",
+    days: int = 0,
+    time_range: str = "",
+    start_date: str = "",
+    end_date: str = "",
+) -> str:
+    """构建搜索时间约束提示词片段。
+
+    优先级: start_date/end_date > time_range > days
+    topic="news" 且无任何时间参数时默认 days=7。
+    topic="general" 且无时间参数时仅返回当前时间上下文。
+    """
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
+
+    now = _dt.now().astimezone()
+    today_str = now.strftime("%Y-%m-%d")
+
+    computed_start = ""
+    computed_end = ""
+
+    if start_date or end_date:
+        computed_start = start_date
+        computed_end = end_date
+    elif time_range:
+        if time_range == "day":
+            computed_start = today_str
+        elif time_range == "week":
+            computed_start = (now - _td(days=7)).strftime("%Y-%m-%d")
+        elif time_range == "month":
+            computed_start = (now - _td(days=30)).strftime("%Y-%m-%d")
+        elif time_range == "year":
+            computed_start = (now - _td(days=365)).strftime("%Y-%m-%d")
+        computed_end = today_str
+    elif days > 0:
+        computed_start = (now - _td(days=days)).strftime("%Y-%m-%d")
+        computed_end = today_str
+    elif topic == "news":
+        # 新闻主题默认最近 7 天
+        computed_start = (now - _td(days=7)).strftime("%Y-%m-%d")
+        computed_end = today_str
+
+    lines: list[str] = []
+
+    if computed_start or computed_end:
+        lines.append("[Search Time Constraints]")
+        lines.append(f"- Topic: {topic}")
+        if computed_start and computed_end:
+            lines.append(f"- Time window: {computed_start} to {computed_end}")
+        elif computed_start:
+            lines.append(f"- Start date: {computed_start}")
+        elif computed_end:
+            lines.append(f"- End date: {computed_end}")
+        elif time_range:
+            lines.append(f"- Time range: past {time_range}")
+        lines.append(f"- Current date: {today_str}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def parse_retry_after(headers: Any) -> float | None:
     """解析 Retry-After 响应头（支持秒数或 HTTP 日期格式）"""
     header = None
@@ -563,7 +725,6 @@ def parse_sources_from_message(message: str) -> dict[str, Any]:
 async def retry_request(
     do_request: Any,
     *,
-    session: aiohttp.ClientSession | None,
     proxy: str | None,
     max_retries: int,
     retry_delay: float,
@@ -574,8 +735,7 @@ async def retry_request(
     """通用的带重试的请求执行器。
 
     Args:
-        do_request: async callable(session, proxy) -> dict
-        session: 可选的已有 session
+        do_request: async callable(proxy) -> dict
         proxy: HTTP 代理
         max_retries: 最大重试次数
         retry_delay: 重试基础间隔
@@ -595,11 +755,7 @@ async def retry_request(
 
     for attempt in range(max_retries + 1):
         try:
-            if session is not None:
-                result = await do_request(session, proxy)
-            else:
-                async with aiohttp.ClientSession() as temp_session:
-                    result = await do_request(temp_session, proxy)
+            result = await do_request(proxy)
 
             if result.get("ok"):
                 break

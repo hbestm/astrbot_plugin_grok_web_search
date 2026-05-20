@@ -18,7 +18,12 @@ if _PLUGIN_DIR not in sys.path:
 from tool import (  # noqa: E402
     DEFAULT_MODEL,
     FETCH_SYSTEM_PROMPT,
+    build_search_time_constraints,
     get_local_time_info,
+    normalize_search_options,
+    resolve_mode_model,
+    resolve_reasoning_params,
+    resolve_search_mode,
 )
 from tool import (  # noqa: E402
     coerce_json_object as _coerce_json_object,
@@ -41,21 +46,20 @@ from tool import (  # noqa: E402
 
 # ─── 新版分组配置读取（与 main.py CONFIG_PATHS 保持一致）──────────────────
 _CONFIG_PATHS = {
-    "use_builtin_provider": ("provider_settings", "use_builtin_provider"),
-    "provider": ("provider_settings", "provider"),
     "model": ("provider_settings", "model"),
     "use_responses_api": ("provider_settings", "use_responses_api"),
+    "quick_model": ("provider_settings", "quick_model"),
+    "detailed_model": ("provider_settings", "detailed_model"),
+    "deep_model": ("provider_settings", "deep_model"),
     "base_url": ("connection_settings", "base_url"),
     "api_key": ("connection_settings", "api_key"),
     "timeout_seconds": ("connection_settings", "timeout_seconds"),
-    "reuse_session": ("connection_settings", "reuse_session"),
     "proxy": ("connection_settings", "proxy"),
-    "enable_thinking": ("request_settings", "enable_thinking"),
-    "thinking_budget": ("request_settings", "thinking_budget"),
     "max_retries": ("request_settings", "max_retries"),
     "retry_delay": ("request_settings", "retry_delay"),
     "retryable_status_codes": ("request_settings", "retryable_status_codes"),
     "custom_system_prompt": ("request_settings", "custom_system_prompt"),
+    "enable_stream": ("request_settings", "enable_stream"),
     "extra_body": ("advanced_settings", "extra_body"),
     "extra_headers": ("advanced_settings", "extra_headers"),
     "show_sources": ("output_settings", "show_sources"),
@@ -68,21 +72,20 @@ _CONFIG_PATHS = {
 }
 
 _CONFIG_DEFAULTS = {
-    "use_builtin_provider": False,
-    "provider": "",
     "model": DEFAULT_MODEL,
     "use_responses_api": False,
+    "quick_model": "",
+    "detailed_model": "",
+    "deep_model": "",
     "base_url": "",
     "api_key": "",
     "timeout_seconds": 60,
-    "reuse_session": False,
     "proxy": "",
-    "enable_thinking": True,
-    "thinking_budget": 32000,
     "max_retries": 3,
     "retry_delay": 1.0,
     "retryable_status_codes": [429, 500, 502, 503, 504],
     "custom_system_prompt": "",
+    "enable_stream": False,
     "extra_body": "",
     "extra_headers": "",
     "show_sources": False,
@@ -274,10 +277,11 @@ def _request_chat_completions(
     model: str,
     query: str,
     timeout_seconds: float,
-    enable_thinking: bool,
-    thinking_budget: int,
+    reasoning_effort: str | None,
+    reasoning_budget_tokens: int | None,
     extra_headers: dict[str, Any],
     extra_body: dict[str, Any],
+    stream: bool = False,
     images: list[str] | None = None,
     system_prompt: str | None = None,
 ) -> dict[str, Any]:
@@ -325,16 +329,26 @@ def _request_chat_completions(
             user_message,
         ],
         "temperature": 0.2,
-        "stream": False,
+        "stream": stream,
     }
 
     # 添加思考模式参数
-    if enable_thinking:
-        body["reasoning_effort"] = "high"
-        if thinking_budget > 0:
-            body["reasoning_budget_tokens"] = thinking_budget
+    if reasoning_effort:
+        body["reasoning_effort"] = reasoning_effort
+        if reasoning_budget_tokens:
+            body["reasoning_budget_tokens"] = reasoning_budget_tokens
 
-    body.update(extra_body)
+    # 合并 extra_body，保护核心字段不被覆盖
+    _protected = {
+        "model",
+        "messages",
+        "stream",
+        "reasoning_effort",
+        "reasoning_budget_tokens",
+    }
+    for _key, _value in extra_body.items():
+        if _key not in _protected:
+            body[_key] = _value
 
     headers: dict[str, str] = {
         "Content-Type": "application/json",
@@ -507,16 +521,46 @@ def main() -> int:
         "--timeout-seconds", type=float, default=0.0, help="Override timeout (seconds)."
     )
     parser.add_argument(
-        "--enable-thinking",
+        "--search-depth",
         type=str,
         default="",
-        help="Enable thinking mode (true/false).",
+        help="Search depth: basic, advanced, or deep.",
     )
     parser.add_argument(
-        "--thinking-budget",
+        "--max-results",
         type=int,
         default=0,
-        help="Thinking token budget.",
+        help="Desired number of results (5-20).",
+    )
+    parser.add_argument(
+        "--topic",
+        type=str,
+        default="",
+        help="Search topic: general or news.",
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=0,
+        help="Days to look back from today.",
+    )
+    parser.add_argument(
+        "--time-range",
+        type=str,
+        default="",
+        help="Time range: day, week, month, or year.",
+    )
+    parser.add_argument(
+        "--start-date",
+        type=str,
+        default="",
+        help="Start date in YYYY-MM-DD format.",
+    )
+    parser.add_argument(
+        "--end-date",
+        type=str,
+        default="",
+        help="End date in YYYY-MM-DD format.",
     )
     parser.add_argument(
         "--extra-body-json",
@@ -610,6 +654,34 @@ def main() -> int:
         or DEFAULT_MODEL
     )
 
+    # 使用共享规范化函数统一校验所有搜索选项
+    opts = normalize_search_options(
+        search_depth=args.search_depth.strip() or "basic",
+        max_results=args.max_results or 7,
+        topic=args.topic.strip() or "general",
+        days=args.days,
+        time_range=args.time_range.strip(),
+        start_date=args.start_date.strip(),
+        end_date=args.end_date.strip(),
+    )
+    search_depth = str(opts["search_depth"])
+    max_results = int(str(opts["max_results"]))
+    topic = str(opts["topic"])
+    days = int(str(opts["days"]))
+    time_range = str(opts["time_range"])
+    start_date = str(opts["start_date"])
+    end_date = str(opts["end_date"])
+
+    # 解析模式及对应模型
+    mode = resolve_search_mode(search_depth)
+    mode_model = resolve_mode_model(
+        str(_cfg(config, f"{mode}_model") or ""),
+        model,
+    )
+
+    # 推理参数
+    reasoning_effort, reasoning_budget_tokens = resolve_reasoning_params(search_depth)
+
     timeout_seconds = args.timeout_seconds
     if not timeout_seconds:
         try:
@@ -623,36 +695,6 @@ def main() -> int:
             timeout_seconds = 0.0
     if not timeout_seconds or timeout_seconds <= 0:
         timeout_seconds = 60.0
-
-    # 解析思考模式配置
-    enable_thinking_str = (
-        args.enable_thinking.strip().lower()
-        or os.environ.get("GROK_ENABLE_THINKING", "").strip().lower()
-    )
-    if enable_thinking_str in ("true", "1", "yes"):
-        enable_thinking = True
-    elif enable_thinking_str in ("false", "0", "no"):
-        enable_thinking = False
-    else:
-        # 从配置文件读取，默认 True
-        cfg_enable_thinking = _cfg(config, "enable_thinking")
-        enable_thinking = (
-            cfg_enable_thinking if isinstance(cfg_enable_thinking, bool) else True
-        )
-
-    thinking_budget = args.thinking_budget
-    if not thinking_budget:
-        try:
-            thinking_budget = int(os.environ.get("GROK_THINKING_BUDGET", "0") or "0")
-        except (ValueError, TypeError):
-            thinking_budget = 0
-    if not thinking_budget:
-        try:
-            thinking_budget = int(_cfg(config, "thinking_budget") or 0)
-        except (ValueError, TypeError):
-            thinking_budget = 0
-    if not thinking_budget or thinking_budget <= 0:
-        thinking_budget = 32000
 
     # 解析 Responses API 开关
     use_responses_api = False
@@ -738,12 +780,36 @@ def main() -> int:
             return 2
         query = args.query
 
+        # 构建时间约束提示词并注入搜索引导
+        time_constraints = build_search_time_constraints(
+            topic=topic,
+            days=days,
+            time_range=time_range,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if time_constraints:
+            query = f"{time_constraints}\n{query}"
+
+        depth_guide = {
+            "basic": "Provide a quick, concise overview.",
+            "advanced": "Conduct thorough research with multiple sources.",
+            "deep": "Perform an exhaustive, in-depth analysis with maximum sources.",
+        }.get(search_depth, "")
+        if depth_guide:
+            query = (
+                f"[Search Guide]\n"
+                f"- Depth: {search_depth} ({depth_guide})\n"
+                f"- Desired results: {max_results}\n"
+                f"\n{query}"
+            )
+
     try:
         if use_responses_api and not is_fetch_mode:
             resp = _request_responses_api(
                 base_url=base_url,
                 api_key=api_key,
-                model=model,
+                model=mode_model,
                 query=query,
                 timeout_seconds=timeout_seconds,
                 extra_headers=extra_headers,
@@ -755,11 +821,16 @@ def main() -> int:
             resp = _request_chat_completions(
                 base_url=base_url,
                 api_key=api_key,
-                model=model,
+                model=mode_model if not is_fetch_mode else model,
                 query=query,
                 timeout_seconds=timeout_seconds,
-                enable_thinking=enable_thinking if not is_fetch_mode else False,
-                thinking_budget=thinking_budget if not is_fetch_mode else 0,
+                reasoning_effort=reasoning_effort if not is_fetch_mode else None,
+                reasoning_budget_tokens=reasoning_budget_tokens
+                if not is_fetch_mode
+                else None,
+                stream=bool(_cfg(config, "enable_stream"))
+                if not is_fetch_mode
+                else False,
                 extra_headers=extra_headers,
                 extra_body=extra_body,
                 images=images or None,

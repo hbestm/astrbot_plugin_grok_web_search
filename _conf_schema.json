@@ -2,21 +2,8 @@
   "provider_settings": {
     "type": "object",
     "description": "供应商设置",
-    "hint": "选择使用 AstrBot 自带供应商或自定义 Grok API",
+    "hint": "配置 Grok API 端点和模型",
     "items": {
-      "use_builtin_provider": {
-        "type": "bool",
-        "description": "是否使用 AstrBot 自带供应商",
-        "hint": "启用后将使用已配置的 LLM 供应商，无需配置模型参数",
-        "default": false
-      },
-      "provider": {
-        "_special": "select_provider",
-        "type": "string",
-        "description": "选择要使用的 LLM 供应商",
-        "hint": "仅当启用自带供应商时生效，选择已配置的 LLM 供应商",
-        "default": ""
-      },
       "model": {
         "type": "string",
         "description": "模型名称",
@@ -28,35 +15,47 @@
         "description": "使用 /v1/responses 接口",
         "hint": "仅适用于 xAI 官方 API，非官方/第三方服务对此接口支持不完善，可能导致请求失败",
         "default": false
+      },
+      "quick_model": {
+        "type": "string",
+        "description": "快速搜索模式使用的模型",
+        "hint": "留空则使用上方\"模型名称\"配置。search_depth=basic 时生效",
+        "default": ""
+      },
+      "detailed_model": {
+        "type": "string",
+        "description": "详细搜索模式使用的模型",
+        "hint": "留空则使用上方\"模型名称\"配置。search_depth=advanced 时生效",
+        "default": ""
+      },
+      "deep_model": {
+        "type": "string",
+        "description": "深度搜索模式使用的模型",
+        "hint": "留空则使用上方\"模型名称\"配置。search_depth=deep 时生效",
+        "default": ""
       }
     }
   },
   "connection_settings": {
     "type": "object",
     "description": "连接设置",
-    "hint": "自定义供应商的连接参数",
+    "hint": "Grok API 连接参数",
     "items": {
       "base_url": {
         "type": "string",
         "description": "Grok API 端点 URL",
-        "hint": "使用自定义供应商时必填，例如: https://api.example.com，会自动补全 /v1/chat/completions 或 /v1/responses"
+        "hint": "必填，例如: https://api.example.com，会自动补全 /v1/chat/completions 或 /v1/responses"
       },
       "api_key": {
         "type": "string",
         "description": "Grok API 密钥",
-        "hint": "使用自定义供应商时必填，你的 API Key"
+        "hint": "必填，你的 API Key"
       },
       "timeout_seconds": {
         "type": "int",
         "description": "请求超时时间（秒）",
         "hint": "控制每次请求的最大等待时间",
         "default": 60
-      },
-      "reuse_session": {
-        "type": "bool",
-        "description": "是否复用 HTTP 会话",
-        "hint": "高频调用场景可开启以减少连接开销",
-        "default": false
       },
       "proxy": {
         "type": "string",
@@ -71,17 +70,11 @@
     "description": "请求设置",
     "hint": "控制模型请求、重试和提示词",
     "items": {
-      "enable_thinking": {
+      "enable_stream": {
         "type": "bool",
-        "description": "是否开启思考模式",
-        "hint": "允许模型在回答前进行多轮思考",
-        "default": true
-      },
-      "thinking_budget": {
-        "type": "int",
-        "description": "思考 token 预算",
-        "hint": "控制思考阶段可使用的最大 token 数量",
-        "default": 32000
+        "description": "启用 SSE 响应格式",
+        "hint": "开启后请求 Server-Sent Events 响应并聚合解析为最终结果；消息仍一次性发送",
+        "default": false
       },
       "max_retries": {
         "type": "int",
@@ -214,16 +207,6 @@
       }
     }
   },
-  "use_builtin_provider": {
-    "type": "bool",
-    "default": false,
-    "invisible": true
-  },
-  "provider": {
-    "type": "string",
-    "default": "",
-    "invisible": true
-  },
   "model": {
     "type": "string",
     "default": "grok-4.1-fast",
@@ -232,6 +215,21 @@
   "use_responses_api": {
     "type": "bool",
     "default": false,
+    "invisible": true
+  },
+  "quick_model": {
+    "type": "string",
+    "default": "",
+    "invisible": true
+  },
+  "detailed_model": {
+    "type": "string",
+    "default": "",
+    "invisible": true
+  },
+  "deep_model": {
+    "type": "string",
+    "default": "",
     "invisible": true
   },
   "base_url": {
@@ -249,29 +247,19 @@
     "default": 60,
     "invisible": true
   },
-  "reuse_session": {
-    "type": "bool",
-    "default": false,
-    "invisible": true
-  },
   "proxy": {
     "type": "string",
     "default": "",
     "invisible": true
   },
-  "enable_thinking": {
-    "type": "bool",
-    "default": true,
-    "invisible": true
-  },
-  "thinking_budget": {
-    "type": "int",
-    "default": 32000,
-    "invisible": true
-  },
   "max_retries": {
     "type": "int",
     "default": 3,
+    "invisible": true
+  },
+  "enable_stream": {
+    "type": "bool",
+    "default": false,
     "invisible": true
   },
   "retry_delay": {
