@@ -39,17 +39,17 @@
   "connection_settings": {
     "type": "object",
     "description": "连接设置",
-    "hint": "自定义供应商的连接参数",
+    "hint": "Grok API 连接参数",
     "items": {
       "base_url": {
         "type": "string",
         "description": "Grok API 端点 URL",
-        "hint": "使用自定义供应商时必填，例如: https://api.example.com，会自动补全 /v1/chat/completions 或 /v1/responses"
+        "hint": "必填，例如: https://api.example.com，会自动补全 /v1/chat/completions 或 /v1/responses"
       },
       "api_key": {
         "type": "string",
         "description": "Grok API 密钥",
-        "hint": "使用自定义供应商时必填，你的 API Key"
+        "hint": "必填，你的 API Key"
       },
       "timeout_seconds": {
         "type": "int",
@@ -72,8 +72,8 @@
     "items": {
       "enable_stream": {
         "type": "bool",
-        "description": "启用 SSE 流式请求",
-        "hint": "开启后使用 Server-Sent Events 流式传输响应，响应更快但需客户端解析",
+        "description": "启用 SSE 响应格式",
+        "hint": "开启后请求 Server-Sent Events 响应并聚合解析为最终结果；消息仍一次性发送",
         "default": false
       },
       "max_retries": {

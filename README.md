@@ -43,8 +43,8 @@
 
 | 配置项 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| `base_url` | string | 条件 | Grok API 端点 URL（必填） |
-| `api_key` | string | 条件 | API 密钥（必填） |
+| `base_url` | string | 是 | Grok API 端点 URL |
+| `api_key` | string | 是 | API 密钥 |
 | `timeout_seconds` | int | 否 | 超时时间（默认: 60 秒） |
 | `proxy` | string | 否 | HTTP 代理地址（例如: http://127.0.0.1:7890） |
 
@@ -52,7 +52,7 @@
 
 | 配置项 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| `enable_stream` | bool | 否 | 启用 SSE 流式请求（默认: false） |
+| `enable_stream` | bool | 否 | 启用 SSE 响应格式并聚合解析最终结果（默认: false） |
 | `max_retries` | int | 否 | 最大重试次数（默认: 3） |
 | `retry_delay` | float | 否 | 重试间隔时间（默认: 1 秒），429 时优先使用 Retry-After 头 |
 | `retryable_status_codes` | list | 否 | 可重试的 HTTP 状态码（默认: [429, 500, 502, 503, 504]） |
@@ -185,7 +185,7 @@ astrbot_plugin_grok_web_search/
 ├── metadata.yaml        # 插件元数据
 ├── _conf_schema.json    # 配置项 Schema
 ├── README.md
-└── skill/               # Skill 脚本（首次运行后迁移到 plugin_data）
+└── skill/               # Skill 脚本（运行时同步到 plugin_data，保留本地配置）
     ├── SKILL.md         # Skill 说明文档
     └── scripts/
         └── grok_search.py  # 独立搜索脚本（仅标准库）

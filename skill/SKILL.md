@@ -69,6 +69,13 @@ Fetch mode uses Grok's web browsing capability to retrieve the URL and convert i
 | `--api-key` | Override API key |
 | `--model` | Override model name |
 | `--timeout-seconds` | Request timeout in seconds |
+| `--search-depth` | Search depth: `basic`, `advanced`, or `deep` |
+| `--max-results` | Desired result count, clamped to 5-20 |
+| `--topic` | Search topic: `general` or `news` |
+| `--days` | Days to look back from today |
+| `--time-range` | Time range: `day`, `week`, `month`, or `year` |
+| `--start-date` | Start date in `YYYY-MM-DD` format |
+| `--end-date` | End date in `YYYY-MM-DD` format |
 | `--extra-body-json` | Extra JSON to merge into request body |
 | `--extra-headers-json` | Extra JSON to merge into request headers |
 | `--image-files` | Comma-separated image file paths for multimodal queries |

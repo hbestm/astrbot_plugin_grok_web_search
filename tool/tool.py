@@ -104,6 +104,7 @@ _VALID_TIME_RANGES = {"day", "week", "month", "year"}
 _VALID_TOPICS = {"general", "news"}
 # search_depth → 模式名映射
 _DEPTH_MODE_MAP = {"basic": "quick", "advanced": "detailed", "deep": "deep"}
+_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def normalize_search_options(
@@ -148,14 +149,11 @@ def normalize_search_options(
         time_range = ""
 
     # 日期格式校验（YYYY-MM-DD）
-    import re as _re
-
     start_date = str(start_date).strip()
     end_date = str(end_date).strip()
-    _date_pat = _re.compile(r"^\d{4}-\d{2}-\d{2}$")
-    if start_date and not _date_pat.match(start_date):
+    if start_date and not _DATE_PATTERN.match(start_date):
         start_date = ""
-    if end_date and not _date_pat.match(end_date):
+    if end_date and not _DATE_PATTERN.match(end_date):
         end_date = ""
 
     return {

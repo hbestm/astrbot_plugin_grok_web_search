@@ -119,11 +119,10 @@ async def grok_responses_search(
     merge_extra_body(body, extra_body, {"model", "input", "tools", "stream"})
     headers = build_headers(api_key, extra_headers)
 
-    async def _do_request(
-        req_proxy: str | None = None,
-    ) -> dict[str, Any]:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(
+    async with aiohttp.ClientSession() as session:
+
+        async def _do_request(req_proxy: str | None = None) -> dict[str, Any]:
+            async with session.post(
                 url,
                 json=body,
                 headers=headers,
@@ -148,16 +147,16 @@ async def grok_responses_search(
                         raw=raw_text[:2000] if raw_text else "",
                     )
 
-    # 使用通用重试执行器
-    result = await retry_request(
-        _do_request,
-        proxy=proxy,
-        max_retries=max_retries,
-        retry_delay=retry_delay,
-        retryable_status_codes=retryable_status_codes,
-        timeout=timeout,
-        started=started,
-    )
+        # 使用通用重试执行器
+        result = await retry_request(
+            _do_request,
+            proxy=proxy,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+            retryable_status_codes=retryable_status_codes,
+            timeout=timeout,
+            started=started,
+        )
 
     if not result.get("ok") or "data" not in result:
         return result

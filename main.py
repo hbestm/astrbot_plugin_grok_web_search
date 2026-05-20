@@ -416,18 +416,38 @@ class GrokSearchPlugin(Star):
         return self._get_plugin_data_path() / "skill"
 
     def _migrate_skill_to_persistent(self):
-        """首次安装：将插件目录的 skill 复制到持久化目录"""
+        """同步插件内置 Skill 到持久化目录，保留用户本地配置。"""
         source_dir = Path(__file__).parent / "skill"
         persistent_dir = self._get_skill_persistent_path()
 
-        if source_dir.exists() and not persistent_dir.exists():
-            try:
-                shutil.copytree(source_dir, persistent_dir, symlinks=True)
-                logger.info(
-                    f"[{PLUGIN_NAME}] Skill 已复制到持久化目录: {persistent_dir}"
-                )
-            except Exception as e:
-                logger.error(f"[{PLUGIN_NAME}] Skill 复制到持久化目录失败: {e}")
+        if not source_dir.exists():
+            return
+        if persistent_dir.is_symlink():
+            logger.error(
+                f"[{PLUGIN_NAME}] Skill 持久化目录是 symlink，拒绝同步: {persistent_dir}"
+            )
+            return
+
+        try:
+            persistent_dir.mkdir(parents=True, exist_ok=True)
+            for source_path in source_dir.rglob("*"):
+                rel_path = source_path.relative_to(source_dir)
+                target_path = persistent_dir / rel_path
+                if source_path.is_dir():
+                    target_path.mkdir(parents=True, exist_ok=True)
+                    continue
+
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                if (
+                    rel_path.name in {"config.json", "config.local.json"}
+                    and target_path.exists()
+                ):
+                    continue
+                shutil.copy2(source_path, target_path)
+
+            logger.info(f"[{PLUGIN_NAME}] Skill 已同步到持久化目录: {persistent_dir}")
+        except Exception as e:
+            logger.error(f"[{PLUGIN_NAME}] Skill 同步到持久化目录失败: {e}")
 
     def _install_skill(self):
         """通过 SkillManager 安装 Skill（打包为 zip 后调用官方接口）"""
