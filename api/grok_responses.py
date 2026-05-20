@@ -38,7 +38,6 @@ async def grok_responses_search(
     timeout: float = 60.0,
     extra_body: dict | None = None,
     extra_headers: dict | None = None,
-    session: aiohttp.ClientSession | None = None,
     system_prompt: str | None = None,
     max_retries: int = 3,
     retry_delay: float = 1.0,
@@ -60,7 +59,6 @@ async def grok_responses_search(
         timeout: 超时时间（秒）
         extra_body: 额外请求体参数
         extra_headers: 额外请求头
-        session: 可选的 aiohttp.ClientSession
         system_prompt: 自定义系统提示词
         max_retries: 最大重试次数
         retry_delay: 重试间隔时间（秒）
@@ -122,36 +120,37 @@ async def grok_responses_search(
     headers = build_headers(api_key, extra_headers)
 
     async def _do_request(
-        s: aiohttp.ClientSession,
         req_proxy: str | None = None,
     ) -> dict[str, Any]:
-        async with s.post(
-            url,
-            json=body,
-            headers=headers,
-            timeout=aiohttp.ClientTimeout(total=timeout),
-            proxy=req_proxy,
-        ) as resp:
-            if resp.status != 200:
-                error_text = await resp.text()
-                return format_http_error(resp.status, error_text, started, resp.headers)
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                url,
+                json=body,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=timeout),
+                proxy=req_proxy,
+            ) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    return format_http_error(
+                        resp.status, error_text, started, resp.headers
+                    )
 
-            raw_text = await resp.text()
+                raw_text = await resp.text()
 
-            try:
-                data = json.loads(raw_text)
-                return {"ok": True, "data": data}
-            except json.JSONDecodeError:
-                return make_error_result(
-                    "响应解析失败，API 返回了非 JSON 格式的数据",
-                    started,
-                    raw=raw_text[:2000] if raw_text else "",
-                )
+                try:
+                    data = json.loads(raw_text)
+                    return {"ok": True, "data": data}
+                except json.JSONDecodeError:
+                    return make_error_result(
+                        "响应解析失败，API 返回了非 JSON 格式的数据",
+                        started,
+                        raw=raw_text[:2000] if raw_text else "",
+                    )
 
     # 使用通用重试执行器
     result = await retry_request(
         _do_request,
-        session=session,
         proxy=proxy,
         max_retries=max_retries,
         retry_delay=retry_delay,

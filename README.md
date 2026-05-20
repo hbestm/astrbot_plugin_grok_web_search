@@ -33,27 +33,26 @@
 
 | 配置项 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| `use_builtin_provider` | bool | 否 | 是否使用 AstrBot 自带供应商（默认: false） |
-| `provider` | string | 条件 | 选择已配置的 LLM 供应商（启用自带供应商时必填） |
-| `model` | string | 否 | 模型名称（默认: grok-4.1-fast，启用自带供应商时使用供应商默认模型） |
+| `model` | string | 否 | 通用模型名称（默认: grok-4.1-fast），作为各搜索模式的回退模型 |
 | `use_responses_api` | bool | 否 | 使用 xAI Responses API（仅官方 API 支持，非官方端点兼容性不佳） |
+| `quick_model` | string | 否 | 快速搜索模式模型，留空回退到 `model` |
+| `detailed_model` | string | 否 | 详细搜索模式模型，留空回退到 `model` |
+| `deep_model` | string | 否 | 深度搜索模式模型，留空回退到 `model` |
 
 ### 连接设置
 
 | 配置项 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| `base_url` | string | 条件 | Grok API 端点 URL（使用自定义供应商时必填） |
-| `api_key` | string | 条件 | API 密钥（使用自定义供应商时必填） |
+| `base_url` | string | 条件 | Grok API 端点 URL（必填） |
+| `api_key` | string | 条件 | API 密钥（必填） |
 | `timeout_seconds` | int | 否 | 超时时间（默认: 60 秒） |
-| `reuse_session` | bool | 否 | 是否复用 HTTP 会话（高频调用场景可开启，默认: false） |
 | `proxy` | string | 否 | HTTP 代理地址（例如: http://127.0.0.1:7890） |
 
 ### 请求设置
 
 | 配置项 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| `enable_thinking` | bool | 否 | 是否开启思考模式（默认: true） |
-| `thinking_budget` | int | 否 | 思考 token 预算（默认: 32000） |
+| `enable_stream` | bool | 否 | 启用 SSE 流式请求（默认: false） |
 | `max_retries` | int | 否 | 最大重试次数（默认: 3） |
 | `retry_delay` | float | 否 | 重试间隔时间（默认: 1 秒），429 时优先使用 Retry-After 头 |
 | `retryable_status_codes` | list | 否 | 可重试的 HTTP 状态码（默认: [429, 500, 502, 503, 504]） |

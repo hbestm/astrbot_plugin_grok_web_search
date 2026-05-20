@@ -2,6 +2,23 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.5.0] - 2026-05-21
+
+### Added
+- **三种搜索模式**：快速(quick)、详细(detailed)、深度(deep)，`search_depth` 参数控制，配置中可为每种模式指定独立模型（`quick_model`/`detailed_model`/`deep_model`）
+- **扩展搜索参数**：`grok_web_search` LLM Tool 新增 `search_depth`、`max_results`、`topic`、`days`、`time_range`、`start_date`、`end_date` 参数
+- **时间约束自动填充**：`build_search_time_constraints()` 根据参数自动计算时间窗口，`topic=news` 默认最近 7 天
+- **SSE 流式请求开关**：`enable_stream` 配置项，启用后使用 Server-Sent Events 流式传输
+- **共享规范化函数**：`normalize_search_options`、`resolve_mode_model`、`resolve_reasoning_params`、`resolve_search_mode`
+
+### Changed
+- **推理参数内部化**：`enable_thinking`/`thinking_budget` 配置移除，改为根据 `search_depth` 自动设置 `reasoning_effort`
+- **工具描述更新**：`grok_web_search`/`grok_web_fetch` 文档字符串更新为英文，精简冗余描述
+
+### Removed
+- **内置供应商支持**：移除 `use_builtin_provider`、`provider` 配置及 `_do_search_via_builtin_provider` 方法
+- **HTTP 会话复用**：移除 `reuse_session` 配置及插件级 `_session` 成员
+
 ## [1.4.1] - 2026-05-05
 
 ### Added

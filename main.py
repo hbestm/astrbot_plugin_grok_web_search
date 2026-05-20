@@ -11,7 +11,6 @@ import asyncio
 import os
 import shutil
 import tempfile
-import time
 import zipfile
 from pathlib import Path
 
@@ -59,12 +58,14 @@ from .tool.tool import (
     DEFAULT_JSON_SYSTEM_PROMPT,
     DEFAULT_MODEL,
     build_headers,
-    extract_urls,
+    build_search_time_constraints,
     normalize_api_key,
     normalize_base_url,
-    normalize_sources,
+    normalize_search_options,
     parse_json_config,
-    parse_json_object,
+    resolve_mode_model,
+    resolve_reasoning_params,
+    resolve_search_mode,
     resolve_system_prompt,
     safe_number,
 )
@@ -73,21 +74,20 @@ PLUGIN_NAME = "astrbot_plugin_grok_web_search"
 FORWARD_SENDER_NAME = "Grok搜索助手"
 
 CONFIG_PATHS = {
-    "use_builtin_provider": ("provider_settings", "use_builtin_provider"),
-    "provider": ("provider_settings", "provider"),
     "model": ("provider_settings", "model"),
     "use_responses_api": ("provider_settings", "use_responses_api"),
+    "quick_model": ("provider_settings", "quick_model"),
+    "detailed_model": ("provider_settings", "detailed_model"),
+    "deep_model": ("provider_settings", "deep_model"),
     "base_url": ("connection_settings", "base_url"),
     "api_key": ("connection_settings", "api_key"),
     "timeout_seconds": ("connection_settings", "timeout_seconds"),
-    "reuse_session": ("connection_settings", "reuse_session"),
     "proxy": ("connection_settings", "proxy"),
-    "enable_thinking": ("request_settings", "enable_thinking"),
-    "thinking_budget": ("request_settings", "thinking_budget"),
     "max_retries": ("request_settings", "max_retries"),
     "retry_delay": ("request_settings", "retry_delay"),
     "retryable_status_codes": ("request_settings", "retryable_status_codes"),
     "custom_system_prompt": ("request_settings", "custom_system_prompt"),
+    "enable_stream": ("request_settings", "enable_stream"),
     "extra_body": ("advanced_settings", "extra_body"),
     "extra_headers": ("advanced_settings", "extra_headers"),
     "show_sources": ("output_settings", "show_sources"),
@@ -100,21 +100,20 @@ CONFIG_PATHS = {
 }
 
 CONFIG_DEFAULTS = {
-    "use_builtin_provider": False,
-    "provider": "",
     "model": DEFAULT_MODEL,
     "use_responses_api": False,
+    "quick_model": "",
+    "detailed_model": "",
+    "deep_model": "",
     "base_url": "",
     "api_key": "",
     "timeout_seconds": 60,
-    "reuse_session": False,
     "proxy": "",
-    "enable_thinking": True,
-    "thinking_budget": 32000,
     "max_retries": 3,
     "retry_delay": 1.0,
     "retryable_status_codes": [429, 500, 502, 503, 504],
     "custom_system_prompt": "",
+    "enable_stream": False,
     "extra_body": "",
     "extra_headers": "",
     "show_sources": False,
@@ -144,7 +143,6 @@ class GrokSearchPlugin(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
         self.config = config or {}
-        self._session: aiohttp.ClientSession | None = None
         self._card_fonts_ready = False
         self._font_init_task: asyncio.Task | None = None
         self._migrate_legacy_config()
@@ -317,19 +315,8 @@ class GrokSearchPlugin(Star):
         # 根据配置卸载不需要的 LLM Tool
         self._unregister_disabled_tools()
 
-        # 如果启用使用 AstrBot 自带供应商，则推迟创建会话和 Skill 安装
-        if self._cfg("use_builtin_provider", False):
-            logger.info(
-                f"[{PLUGIN_NAME}] use_builtin_provider enabled, delaying full initialization until AstrBot is loaded"
-            )
-            return
-
-        # 仅在使用外部 HTTP 客户端时校验 base_url/api_key
+        # 校验 base_url/api_key
         await self._validate_config()
-
-        # 根据配置决定是否创建复用的 HTTP 会话
-        if self._cfg("reuse_session", False):
-            self._session = aiohttp.ClientSession()
 
         # 首次安装：将插件目录的 skill 移动到持久化目录
         self._migrate_skill_to_persistent()
@@ -511,6 +498,13 @@ class GrokSearchPlugin(Star):
         system_prompt: str | None = None,
         use_retry: bool = False,
         images: list[str] | None = None,
+        search_depth: str = "basic",
+        max_results: int = 7,
+        topic: str = "general",
+        days: int = 0,
+        time_range: str = "",
+        start_date: str = "",
+        end_date: str = "",
     ) -> dict:
         """Execute a search.
 
@@ -519,8 +513,26 @@ class GrokSearchPlugin(Star):
             system_prompt: Custom system prompt, uses default when None
             use_retry: Whether to enable retry (command invocation only)
             images: Optional list of base64-encoded images for multimodal queries
+            search_depth: Search depth ("basic"|"advanced"|"deep")
+            max_results: Desired result count (5-20)
+            topic: Search topic ("general"|"news")
+            days: Days to look back (0 = not set)
+            time_range: Time range ("day"|"week"|"month"|"year")
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
         """
-        # 安全解析 timeout 配置
+        # 规范化搜索选项
+        opts = normalize_search_options(
+            search_depth=search_depth,
+            max_results=max_results,
+            topic=topic,
+            days=days,
+            time_range=time_range,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        # 使用全局 timeout 配置
         timeout = safe_number(
             self._cfg("timeout_seconds", 60),
             60.0,
@@ -528,12 +540,25 @@ class GrokSearchPlugin(Star):
             min_val=0.001,
         )
 
-        # 安全解析 thinking_budget 配置
-        thinking_budget = safe_number(
-            self._cfg("thinking_budget", 32000),
-            32000,
-            cast=int,
-            min_val=0,
+        # 根据 search_depth 解析模式和对应的模型
+        mode = resolve_search_mode(str(opts["search_depth"]))
+        mode_model = resolve_mode_model(
+            self._cfg(f"{mode}_model", ""),
+            self._cfg("model", DEFAULT_MODEL),
+        )
+
+        # 推理参数
+        reasoning_effort, reasoning_budget_tokens = resolve_reasoning_params(
+            str(opts["search_depth"])
+        )
+
+        # 构建时间约束提示词
+        time_constraints = build_search_time_constraints(
+            topic=str(opts["topic"]),
+            days=int(opts["days"]),
+            time_range=str(opts["time_range"]),
+            start_date=str(opts["start_date"]),
+            end_date=str(opts["end_date"]),
         )
 
         # 重试配置（仅指令调用时使用）
@@ -556,128 +581,21 @@ class GrokSearchPlugin(Star):
                 DEFAULT_JSON_SYSTEM_PROMPT,
             )
 
-        if self._cfg("use_builtin_provider", False):
-            return await self._do_search_via_builtin_provider(
-                query=query,
-                system_prompt=system_prompt,
-                images=images,
-                use_retry=use_retry,
-                max_retries=max_retries,
-                retry_delay=retry_delay,
-            )
-
         return await self._do_search_via_http(
             query=query,
             system_prompt=system_prompt,
             images=images,
             timeout=timeout,
-            thinking_budget=thinking_budget,
+            reasoning_effort=reasoning_effort,
+            reasoning_budget_tokens=reasoning_budget_tokens,
             max_retries=max_retries,
             retry_delay=retry_delay,
             retryable_status_codes=retryable_status_codes,
+            mode_model=mode_model,
+            search_depth=str(opts["search_depth"]),
+            max_results=int(opts["max_results"]),
+            time_constraints=time_constraints,
         )
-
-    async def _do_search_via_builtin_provider(
-        self,
-        *,
-        query: str,
-        system_prompt: str,
-        images: list[str] | None,
-        use_retry: bool,
-        max_retries: int,
-        retry_delay: float,
-    ) -> dict:
-        """通过 AstrBot 自带 LLM 供应商执行搜索。"""
-        attempts = 0
-        started = time.time()
-        while True:
-            try:
-                # 严格按配置获取 provider
-                configured_provider_id = self._cfg("provider", "")
-                if not configured_provider_id:
-                    return {
-                        "ok": False,
-                        "error": "启用了内置供应商但未选择供应商，请在插件设置中选择一个 LLM 供应商",
-                    }
-                prov = self.context.get_provider_by_id(configured_provider_id)
-                if not prov:
-                    return {
-                        "ok": False,
-                        "error": f"未找到配置的供应商: {configured_provider_id}",
-                    }
-
-                provider_id = prov.meta().id
-
-                # 将 base64 图片转为内置供应商的 image_urls 格式
-                image_urls = [f"base64://{img}" for img in images] if images else None
-
-                llm_resp = await self.context.llm_generate(
-                    chat_provider_id=provider_id,
-                    prompt=query,
-                    system_prompt=system_prompt,
-                    image_urls=image_urls,
-                )
-
-                text = llm_resp.completion_text or ""
-                usage = {}
-                if llm_resp.usage:
-                    usage = {
-                        "prompt_tokens": llm_resp.usage.input,
-                        "completion_tokens": llm_resp.usage.output,
-                        "total_tokens": llm_resp.usage.total,
-                    }
-
-                # 尝试解析 JSON 格式响应
-                parsed = parse_json_object(text)
-                if parsed is not None:
-                    content = str(parsed.get("content", ""))
-                    raw_sources = parsed.get("sources", [])
-                    sources = normalize_sources(raw_sources)
-                    return {
-                        "ok": True,
-                        "content": content,
-                        "sources": sources,
-                        "elapsed_ms": int((time.time() - started) * 1000),
-                        "retries": attempts,
-                        "usage": usage,
-                        "raw": "",
-                    }
-
-                # JSON 解析失败，降级处理：提取纯文本和 URL
-                logger.warning(
-                    f"[{PLUGIN_NAME}] 内置供应商返回非 JSON 格式，使用降级处理"
-                )
-
-                if not text.strip():
-                    return {
-                        "ok": False,
-                        "error": "提供商返回空响应",
-                        "content": "",
-                        "sources": [],
-                        "elapsed_ms": int((time.time() - started) * 1000),
-                        "retries": attempts,
-                        "usage": usage,
-                        "raw": "",
-                    }
-
-                sources = self._extract_sources_from_text(text)
-                return {
-                    "ok": True,
-                    "content": text,
-                    "sources": sources,
-                    "elapsed_ms": int((time.time() - started) * 1000),
-                    "retries": attempts,
-                    "usage": usage,
-                    "raw": text,
-                }
-
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                attempts += 1
-                if not use_retry or attempts > max_retries:
-                    return {"ok": False, "error": str(e)}
-                await asyncio.sleep(retry_delay * attempts)
 
     async def _do_search_via_http(
         self,
@@ -686,23 +604,46 @@ class GrokSearchPlugin(Star):
         system_prompt: str,
         images: list[str] | None,
         timeout: float,
-        thinking_budget: int,
+        reasoning_effort: str | None,
+        reasoning_budget_tokens: int | None,
         max_retries: int,
         retry_delay: float,
         retryable_status_codes: set[int] | None,
+        mode_model: str,
+        search_depth: str = "basic",
+        max_results: int = 7,
+        time_constraints: str = "",
     ) -> dict:
         """通过外部 Grok HTTP API 执行搜索。"""
         try:
             proxy = self._cfg("proxy", "").strip() or None
+
+            # 将时间约束和搜索引导注入到查询前缀
+            enriched_query = query
+            if time_constraints:
+                enriched_query = f"{time_constraints}\n{enriched_query}"
+
+            depth_guide = {
+                "basic": "Provide a quick, concise overview.",
+                "advanced": "Conduct thorough research with multiple sources.",
+                "deep": "Perform an exhaustive, in-depth analysis with maximum sources.",
+            }.get(search_depth, "")
+            if depth_guide:
+                enriched_query = (
+                    f"[Search Guide]\n"
+                    f"- Depth: {search_depth} ({depth_guide})\n"
+                    f"- Desired results: {max_results}\n"
+                    f"\n{enriched_query}"
+                )
+
             common_kwargs = {
-                "query": query,
+                "query": enriched_query,
                 "base_url": self._cfg("base_url", ""),
                 "api_key": self._cfg("api_key", ""),
-                "model": self._cfg("model", DEFAULT_MODEL),
+                "model": mode_model,
                 "timeout": timeout,
                 "extra_body": self._parse_json_config("extra_body"),
                 "extra_headers": self._parse_json_config("extra_headers"),
-                "session": self._session,
                 "system_prompt": system_prompt,
                 "max_retries": max_retries,
                 "retry_delay": retry_delay,
@@ -715,8 +656,9 @@ class GrokSearchPlugin(Star):
                 result = await grok_responses_search(**common_kwargs)
             else:
                 result = await grok_search(
-                    enable_thinking=self._cfg("enable_thinking", True),
-                    thinking_budget=thinking_budget,
+                    reasoning_effort=reasoning_effort,
+                    reasoning_budget_tokens=reasoning_budget_tokens,
+                    stream=self._cfg("enable_stream", False),
                     **common_kwargs,
                 )
         except Exception as e:
@@ -809,27 +751,14 @@ class GrokSearchPlugin(Star):
 
         return "\n".join(lines)
 
-    def _extract_sources_from_text(self, text: str) -> list[dict[str, str]]:
-        """从文本中提取 URL 作为来源，仅允许 http/https 协议"""
-        return [{"url": url, "title": "", "snippet": ""} for url in extract_urls(text)]
-
     def _supports_forward_output(self, event: AstrMessageEvent) -> bool:
         return event.get_platform_name() == "aiocqhttp" and bool(event.get_self_id())
 
     def _help_text(self) -> str:
         """返回帮助文本"""
-        use_builtin = self._cfg("use_builtin_provider", False)
-        mode = "AstrBot 自带" if use_builtin else "自定义"
-        provider_id = (
-            (self._cfg("provider", "") or "未配置")
-            if use_builtin
-            else (self._cfg("base_url", "") or "未配置")
-        )
-        model = (
-            "由供应商决定"
-            if use_builtin
-            else (self._cfg("model", DEFAULT_MODEL) or "默认")
-        )
+        mode = "自定义"
+        provider_id = self._cfg("base_url", "") or "未配置"
+        model = self._cfg("model", DEFAULT_MODEL) or "默认"
         has_custom_prompt = bool((self._cfg("custom_system_prompt", "") or "").strip())
         if has_custom_prompt:
             prompt_info = "自定义"
@@ -1067,22 +996,36 @@ class GrokSearchPlugin(Star):
         event: AstrMessageEvent,
         query: str,
         image_urls: str = "",
+        search_depth: str = "basic",
+        max_results: int = 7,
+        topic: str = "general",
+        days: int = 0,
+        time_range: str = "",
+        start_date: str = "",
+        end_date: str = "",
     ) -> str:
-        """实时联网搜索工具。搜索互联网和 X（Twitter）平台获取最新、准确的信息并返回搜索结果和来源链接。
+        """Real-time web search tool. Search the internet and X (Twitter) for the latest, most accurate information.
 
-        何时使用：
-        - 用户询问实时信息、最新动态、新闻事件、天气、股价等时效性内容
-        - 需要验证事实准确性或你对某个信息不确定时
-        - 用户明确要求搜索或查询
-        - 问题涉及你训练数据截止日期之后的内容
-        - 需要获取特定网址、产品、人物的最新状态
-        - 需要查找 X（Twitter）上的讨论、帖子、用户动态或社交媒体舆论
+        When to use:
+        - User asks about real-time info, latest news, weather, stock prices, or time-sensitive content
+        - You need to verify factual accuracy or are uncertain about some information
+        - User explicitly asks you to search or look something up
+        - Questions involving content beyond your training data cutoff
+        - Need the latest status of a specific URL, product, or person
+        - Need to find discussions, posts, or social media sentiment on X (Twitter)
 
-        返回内容：搜索结果的文本摘要，可能附带参考来源链接。如果搜索失败会返回错误信息。
+        Returns: Search result summary text with optional source links. Error message on failure.
 
         Args:
-            query(string): 搜索查询内容，应是清晰、具体、自包含的自然语言问题或关键词
-            image_urls(string): 可选，逗号分隔的图片URL，用于基于图片内容的搜索
+            query(string): Search query — clear, specific, self-contained natural language question or keywords
+            image_urls(string): Optional comma-separated image URLs for image-based search
+            search_depth(string): "basic" (quick overview), "advanced" (thorough research), or "deep" (exhaustive analysis). Default "basic"
+            max_results(int): Desired number of results, 5-20. Default 7
+            topic(string): "general" or "news". Default "general"
+            days(int): Days to look back from today. Only meaningful with topic="news". 0 = unset
+            time_range(string): Time range — "day", "week", "month", or "year"
+            start_date(string): Start date in YYYY-MM-DD format
+            end_date(string): End date in YYYY-MM-DD format
         """
         # 收集图片：从 LLM 传入的 image_urls 参数 + 用户消息中提取
         images: list[str] = []
@@ -1128,22 +1071,31 @@ class GrokSearchPlugin(Star):
                 f"[{PLUGIN_NAME}] grok_web_search tool: processing with {len(images)} image(s)"
             )
 
-        result = await self._do_search(query, use_retry=False, images=images or None)
+        result = await self._do_search(
+            query,
+            use_retry=False,
+            images=images or None,
+            search_depth=search_depth,
+            max_results=max_results,
+            topic=topic,
+            days=days,
+            time_range=time_range,
+            start_date=start_date,
+            end_date=end_date,
+        )
         return self._format_result_for_llm(result)
 
     @filter.llm_tool(name="grok_web_fetch")
     async def grok_fetch_tool(self, event: AstrMessageEvent, url: str):
-        """网页内容抓取工具。利用 Grok 联网能力获取指定 URL 的完整网页内容，转换为结构化 Markdown 格式返回。
+        """Web content fetching tool. Fetches the full content of a given URL and converts it to structured Markdown format via Grok's web capability.
 
-        使用场景：
-        - 需要读取某个网页的完整内容（文章、文档、帖子等）
-        - 需要提取网页中的具体数据（表格、代码示例、列表等）
-        - 用户提供了一个 URL 并要求查看或总结其内容
-
-        注意：不需要额外配置外部 API，直接通过 Grok 的联网能力实现。
+        When to use:
+        - Need to read the full content of a webpage (article, documentation, post, etc.)
+        - Need to extract specific data from a webpage (tables, code examples, lists, etc.)
+        - User provides a URL and asks to view or summarize its content
 
         Args:
-            url(string): 要抓取的网页 URL，必须是完整的 HTTP/HTTPS 地址
+            url(string): The webpage URL to fetch, must be a complete HTTP/HTTPS address
         """
         if not url or not url.startswith("http"):
             return "错误：请提供完整的 HTTP/HTTPS URL"
@@ -1180,43 +1132,11 @@ class GrokSearchPlugin(Star):
             error = result.get("error", "未知错误")
             return f"网页抓取失败: {error}"
 
-    @filter.on_astrbot_loaded()
-    async def on_astrbot_loaded(self):
-        """当 AstrBot 初始化完成后执行的钩子：在启用了自带供应商时完成插件的剩余初始化工作"""
-        try:
-            if not self._cfg("use_builtin_provider", False):
-                return
-
-            logger.info(f"[{PLUGIN_NAME}] AstrBot 已初始化，继续完成插件初始化")
-
-            # 创建复用的 HTTP 会话（如果配置要求）
-            if self._cfg("reuse_session", False) and (
-                self._session is None or self._session.closed
-            ):
-                self._session = aiohttp.ClientSession()
-
-            # 迁移并根据 enable_skill 安装或卸载 Skill
-            self._migrate_skill_to_persistent()
-            if self._cfg("enable_skill", False):
-                self._install_skill()
-            else:
-                self._uninstall_skill()
-
-        except Exception as e:
-            logger.error(f"[{PLUGIN_NAME}] on_astrbot_loaded 处理失败: {e}")
-
     async def terminate(self):
-        """插件销毁：等待后台字体任务（不可取消）并关闭 HTTP 会话。
-
-        注意：``_font_init_task`` 包装的是 ``asyncio.to_thread`` 调用，
-        取消 Task 不会终止底层线程，因此这里只 detach，让线程自行结束。
-        """
+        """插件销毁：等待后台字体任务完成。"""
         if self._font_init_task and self._font_init_task.done():
             try:
                 await self._font_init_task
             except Exception:
                 pass
         self._font_init_task = None
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None

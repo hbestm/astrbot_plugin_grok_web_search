@@ -34,11 +34,11 @@ async def grok_search(
     api_key: str,
     model: str = DEFAULT_MODEL,
     timeout: float = 60.0,
-    enable_thinking: bool = True,
-    thinking_budget: int = 32000,
+    reasoning_effort: str | None = None,
+    reasoning_budget_tokens: int | None = None,
     extra_body: dict | None = None,
     extra_headers: dict | None = None,
-    session: aiohttp.ClientSession | None = None,
+    stream: bool = False,
     system_prompt: str | None = None,
     max_retries: int = 3,
     retry_delay: float = 1.0,
@@ -55,11 +55,10 @@ async def grok_search(
         api_key: API 密钥
         model: 模型名称
         timeout: 超时时间（秒）
-        enable_thinking: 是否开启思考模式
-        thinking_budget: 思考 token 预算
+        reasoning_effort: 思考模式强度，None 不开启 / "medium" / "high"
+        reasoning_budget_tokens: 思考 token 预算
         extra_body: 额外请求体参数
         extra_headers: 额外请求头
-        session: 可选的 aiohttp.ClientSession，传入时复用，否则创建临时 session
         system_prompt: 自定义系统提示词，为 None 时使用默认提示词
         max_retries: 最大重试次数（默认 3 次）
         retry_delay: 重试间隔时间（秒，默认 1.0）
@@ -110,18 +109,22 @@ async def grok_search(
             user_message,
         ],
         "temperature": 0.2,
-        "stream": False,
+        "stream": stream,
     }
     if model:
         body["model"] = model
 
     # 添加思考模式参数
-    if enable_thinking:
-        body["reasoning_effort"] = "high"
-        if thinking_budget > 0:
-            body["reasoning_budget_tokens"] = thinking_budget
+    if reasoning_effort:
+        body["reasoning_effort"] = reasoning_effort
+        if reasoning_budget_tokens:
+            body["reasoning_budget_tokens"] = reasoning_budget_tokens
 
-    merge_extra_body(body, extra_body, {"model", "messages", "stream"})
+    merge_extra_body(
+        body,
+        extra_body,
+        {"model", "messages", "stream", "reasoning_effort", "reasoning_budget_tokens"},
+    )
     headers = build_headers(api_key, extra_headers)
 
     def _parse_sse_response(raw_text: str) -> dict[str, Any] | None:
@@ -171,51 +174,53 @@ async def grok_search(
         }
 
     async def _do_request(
-        s: aiohttp.ClientSession,
         req_proxy: str | None = None,
     ) -> dict[str, Any]:
-        async with s.post(
-            url,
-            json=body,
-            headers=headers,
-            timeout=aiohttp.ClientTimeout(total=timeout),
-            proxy=req_proxy,
-        ) as resp:
-            if resp.status != 200:
-                error_text = await resp.text()
-                return format_http_error(resp.status, error_text, started, resp.headers)
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                url,
+                json=body,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=timeout),
+                proxy=req_proxy,
+            ) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    return format_http_error(
+                        resp.status, error_text, started, resp.headers
+                    )
 
-            raw_text = await resp.text()
-            content_type = resp.headers.get("Content-Type", "")
+                raw_text = await resp.text()
+                content_type = resp.headers.get("Content-Type", "")
 
-            # 检查是否为 SSE 流式响应
-            is_sse = "text/event-stream" in content_type or raw_text.strip().startswith(
-                "data:"
-            )
-
-            if is_sse:
-                parsed = _parse_sse_response(raw_text)
-                if parsed:
-                    return {"ok": True, "data": parsed}
-                return make_error_result(
-                    "SSE 流式响应解析失败",
-                    started,
-                    raw=raw_text[:2000] if raw_text else "",
+                # 检查是否为 SSE 流式响应
+                is_sse = (
+                    "text/event-stream" in content_type
+                    or raw_text.strip().startswith("data:")
                 )
 
-            try:
-                return {"ok": True, "data": json.loads(raw_text)}
-            except json.JSONDecodeError:
-                return make_error_result(
-                    "响应解析失败，API 返回了非 JSON 格式的数据",
-                    started,
-                    raw=raw_text[:2000] if raw_text else "",
-                )
+                if is_sse:
+                    parsed = _parse_sse_response(raw_text)
+                    if parsed:
+                        return {"ok": True, "data": parsed}
+                    return make_error_result(
+                        "SSE 流式响应解析失败",
+                        started,
+                        raw=raw_text[:2000] if raw_text else "",
+                    )
+
+                try:
+                    return {"ok": True, "data": json.loads(raw_text)}
+                except json.JSONDecodeError:
+                    return make_error_result(
+                        "响应解析失败，API 返回了非 JSON 格式的数据",
+                        started,
+                        raw=raw_text[:2000] if raw_text else "",
+                    )
 
     # 使用通用重试执行器
     result = await retry_request(
         _do_request,
-        session=session,
         proxy=proxy,
         max_retries=max_retries,
         retry_delay=retry_delay,
@@ -290,7 +295,6 @@ async def grok_fetch(
     timeout: float = 60.0,
     extra_body: dict | None = None,
     extra_headers: dict | None = None,
-    session: aiohttp.ClientSession | None = None,
     proxy: str | None = None,
 ) -> dict[str, Any]:
     """利用 Grok 联网能力抓取指定 URL 的网页内容并转为 Markdown
@@ -320,11 +324,10 @@ async def grok_fetch(
         api_key=api_key,
         model=model,
         timeout=timeout,
-        enable_thinking=False,
-        thinking_budget=0,
+        reasoning_effort=None,
+        reasoning_budget_tokens=None,
         extra_body=extra_body,
         extra_headers=extra_headers,
-        session=session,
         system_prompt=FETCH_SYSTEM_PROMPT,
         max_retries=2,
         proxy=proxy,
