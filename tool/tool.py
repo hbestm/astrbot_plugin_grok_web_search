@@ -18,7 +18,8 @@ import aiohttp
 
 # Cloudflare AI Gateway 提供商映射表
 CF_PROVIDER_MAP = {
-    "xai": "xai",
+    "xai": "grok",
+    "grok": "grok",
     "openai": "openai",
     "anthropic": "anthropic",
     "google": "google-ai-studio",
@@ -26,7 +27,7 @@ CF_PROVIDER_MAP = {
     "groq": "groq",
 }
 # 默认 CF AI Gateway 提供商
-DEFAULT_CF_PROVIDER = "xai"
+DEFAULT_CF_PROVIDER = "grok"
 
 # 默认系统提示词（要求返回 JSON 格式，LLM Tool 和 Skill 使用）
 DEFAULT_JSON_SYSTEM_PROMPT = (
