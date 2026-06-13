@@ -669,9 +669,9 @@ def main() -> int:
     cf_aig_mode = cf_aig_enabled
     if cf_aig_enabled:
         cf_account_id = str(_cfg(config, "cf_account_id", "") or "").strip()
-        cf_gateway_id = str(_cfg(config, "cf_gateway_id", "") or "").strip()
+        cf_gateway_id = str(_cfg(config, "cf_gateway_id", "") or "default").strip()
         cf_api_key = str(_cfg(config, "cf_api_key", "") or "").strip()
-        if cf_account_id and cf_gateway_id:
+        if cf_account_id:
             from tool import build_cf_aig_base_url as _build_cf_url
             cf_url = _build_cf_url(cf_account_id, cf_gateway_id)
             if cf_url:

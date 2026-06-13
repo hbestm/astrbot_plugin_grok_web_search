@@ -59,12 +59,14 @@
 |--------|------|------|------|
 | `cf_aig_enabled` | bool | 是 | 启用 CF AI Gateway（开启后自动覆盖 base_url 和认证方式） |
 | `cf_account_id` | string | 是 | Cloudflare 账户 ID（Dashboard 右上角） |
-| `cf_gateway_id` | string | 是 | AI Gateway ID（未手动创建则自动使用 `default`） |
+| `cf_gateway_id` | string | 否 | AI Gateway ID，留空自动使用 `default` |
 | `cf_api_key` | string | 否 | Cloudflare API Token，留空则使用上方 `api_key` |
 
 **认证方式**：启用 CF AI Gateway 后，插件使用 `cf-aig-authorization` 请求头传递 CF API Token（BYOK 模式），不会将上游密钥透传给 Cloudflare。
 
 **免费方案**：CF AI Gateway 免费版每月 50 万次请求，xAI 也提供免费 API 额度（如 grok-4.1-fast 模型）。
+
+> 💡 **简化配置**：只需填 `cf_aig_enabled=开`、`cf_account_id` 和 `cf_api_key` 三项即可，`cf_gateway_id` 留空自动用 `default`。
 
 ### 请求设置
 

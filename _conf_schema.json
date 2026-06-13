@@ -201,7 +201,7 @@
       "cf_gateway_id": {
         "type": "string",
         "description": "AI Gateway ID",
-        "hint": "在 Cloudflare AI Gateway 中创建的网关名称，如未手动创建会自动使用 default"
+        "hint": "在 Cloudflare AI Gateway 中创建的网关名称，留空自动使用 default"
       },
       "cf_api_key": {
         "type": "string",

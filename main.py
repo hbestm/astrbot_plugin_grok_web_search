@@ -337,19 +337,19 @@ class GrokSearchPlugin(Star):
             self._uninstall_skill()
 
     async def _validate_config(self):
-        """验证必要配置，并通过 v1/models 接口检查连通性"""
+        """验证必要配置，并通过 models 接口检查连通性"""
         cf_aig_enabled = self._cfg("cf_aig_enabled", False)
-        cf_account_id = self._cfg("cf_account_id", "")
-        cf_gateway_id = self._cfg("cf_gateway_id", "")
-        cf_api_key = self._cfg("cf_api_key", "")
 
         if cf_aig_enabled:
             # CF AI Gateway 模式
+            cf_account_id = self._cfg("cf_account_id", "").strip()
+            cf_gateway_id = (self._cfg("cf_gateway_id", "") or "default").strip()
+            cf_api_key = self._cfg("cf_api_key", "").strip()
             base_url = build_cf_aig_base_url(cf_account_id, cf_gateway_id)
             api_key = normalize_api_key(cf_api_key or self._cfg("api_key", ""))
             if not base_url:
                 logger.warning(
-                    f"[{PLUGIN_NAME}] CF AI Gateway 模式已启用但缺少 cf_account_id 或 cf_gateway_id 配置"
+                    f"[{PLUGIN_NAME}] CF AI Gateway 模式已启用但缺少 cf_account_id 配置"
                 )
                 return
             if not api_key:
@@ -672,9 +672,9 @@ class GrokSearchPlugin(Star):
             cf_aig_enabled = self._cfg("cf_aig_enabled", False)
             cf_aig_mode = cf_aig_enabled
             if cf_aig_enabled:
-                cf_account_id = self._cfg("cf_account_id", "")
-                cf_gateway_id = self._cfg("cf_gateway_id", "")
-                cf_api_key = self._cfg("cf_api_key", "")
+                cf_account_id = self._cfg("cf_account_id", "").strip()
+                cf_gateway_id = (self._cfg("cf_gateway_id", "") or "default").strip()
+                cf_api_key = self._cfg("cf_api_key", "").strip()
                 effective_base_url = build_cf_aig_base_url(cf_account_id, cf_gateway_id)
                 effective_api_key = normalize_api_key(
                     cf_api_key or self._cfg("api_key", "")

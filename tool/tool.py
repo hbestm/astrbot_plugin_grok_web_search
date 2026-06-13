@@ -471,20 +471,24 @@ def normalize_base_url(base_url: str) -> str:
 def build_cf_aig_base_url(account_id: str, gateway_id: str, provider: str = "xai") -> str:
     """构建 Cloudflare AI Gateway provider-specific 端点 URL。
 
+    如果未指定 gateway_id，自动使用 "default"（CF 会自动创建默认网关）。
+
     Args:
         account_id: Cloudflare 账户 ID
-        gateway_id: AI Gateway ID
+        gateway_id: AI Gateway ID，留空或"default"则使用默认网关
         provider: 上游提供商名称（如 xai, openai），默认 xai
 
     Returns:
         完整的 CF AI Gateway 端点 URL
     """
     account_id = (account_id or "").strip()
-    gateway_id = (gateway_id or "").strip()
+    gateway_id = (gateway_id or "default").strip().lower()
     provider = (provider or "xai").strip().lower()
     provider = CF_PROVIDER_MAP.get(provider, provider)
-    if not account_id or not gateway_id:
+    if not account_id:
         return ""
+    if not gateway_id:
+        gateway_id = "default"
     return f"https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/{provider}"
 
 
