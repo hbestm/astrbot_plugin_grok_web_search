@@ -17,6 +17,7 @@ from ..tool.tool import (
     DEFAULT_JSON_SYSTEM_PROMPT,
     DEFAULT_MODEL,
     IMAGE_UNSUPPORTED_ERROR,
+    build_api_url,
     build_headers,
     build_user_content,
     format_http_error,
@@ -44,6 +45,7 @@ async def grok_responses_search(
     retryable_status_codes: set[int] | None = None,
     images: list[str] | None = None,
     proxy: str | None = None,
+    cf_aig_mode: bool = False,
 ) -> dict[str, Any]:
     """
     通过 xAI Responses API 进行联网搜索（异步）
@@ -65,6 +67,7 @@ async def grok_responses_search(
         retryable_status_codes: 可重试的 HTTP 状态码集合
         images: 可选的 base64 编码图片列表
         proxy: HTTP 代理地址
+        cf_aig_mode: 是否使用 Cloudflare AI Gateway 模式
 
     Returns:
         {
@@ -87,7 +90,7 @@ async def grok_responses_search(
     base_url, api_key = config
 
     # 使用 Responses API 端点
-    url = f"{normalize_base_url(base_url)}/v1/responses"
+    url = build_api_url(base_url, "responses", cf_aig_mode=cf_aig_mode)
 
     # 使用自定义提示词或默认提示词
     final_system_prompt = (
@@ -117,7 +120,7 @@ async def grok_responses_search(
     }
 
     merge_extra_body(body, extra_body, {"model", "input", "tools", "stream"})
-    headers = build_headers(api_key, extra_headers)
+    headers = build_headers(api_key, extra_headers, cf_aig_mode=cf_aig_mode)
 
     async with aiohttp.ClientSession() as session:
 

@@ -16,6 +16,18 @@ import aiohttp
 
 # ─── 常量 ───────────────────────────────────────────────
 
+# Cloudflare AI Gateway 提供商映射表
+CF_PROVIDER_MAP = {
+    "xai": "xai",
+    "openai": "openai",
+    "anthropic": "anthropic",
+    "google": "google-ai-studio",
+    "deepseek": "deepseek",
+    "groq": "groq",
+}
+# 默认 CF AI Gateway 提供商
+DEFAULT_CF_PROVIDER = "xai"
+
 # 默认系统提示词（要求返回 JSON 格式，LLM Tool 和 Skill 使用）
 DEFAULT_JSON_SYSTEM_PROMPT = (
     "You are a web research assistant with real-time search capabilities. "
@@ -454,6 +466,78 @@ def normalize_base_url(base_url: str) -> str:
     if base_url.endswith("/v1"):
         base_url = base_url[: -len("/v1")]
     return base_url
+
+
+def build_cf_aig_base_url(account_id: str, gateway_id: str, provider: str = "xai") -> str:
+    """构建 Cloudflare AI Gateway provider-specific 端点 URL。
+
+    Args:
+        account_id: Cloudflare 账户 ID
+        gateway_id: AI Gateway ID
+        provider: 上游提供商名称（如 xai, openai），默认 xai
+
+    Returns:
+        完整的 CF AI Gateway 端点 URL
+    """
+    account_id = (account_id or "").strip()
+    gateway_id = (gateway_id or "").strip()
+    provider = (provider or "xai").strip().lower()
+    provider = CF_PROVIDER_MAP.get(provider, provider)
+    if not account_id or not gateway_id:
+        return ""
+    return f"https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/{provider}"
+
+
+def build_api_url(base_url: str, path: str, cf_aig_mode: bool = False) -> str:
+    """构建 API 请求 URL。
+
+    CF AI Gateway 的 provider-specific 端点已含 /v1/ 路径，
+    直接拼接 path；直连模式则需要加 /v1/ 前缀。
+
+    Args:
+        base_url: 经过 normalize_base_url 处理的 base URL
+        path: API 路径，如 "chat/completions"、"models"
+        cf_aig_mode: 是否使用 CF AI Gateway 模式
+
+    Returns:
+        完整 API URL
+    """
+    base = normalize_base_url(base_url)
+    if not base:
+        return ""
+    if cf_aig_mode:
+        return f"{base}/{path}"
+    return f"{base}/v1/{path}"
+
+
+def build_headers(
+    api_key: str,
+    extra_headers: dict | None = None,
+    cf_aig_mode: bool = False,
+) -> dict[str, str]:
+    """构建请求头，支持 CF AI Gateway 的 cf-aig-authorization。
+
+    Args:
+        api_key: API 密钥（直连模式为 provider key，CF 模式为 CF API Token）
+        extra_headers: 附加请求头
+        cf_aig_mode: 是否使用 CF AI Gateway 认证方式
+
+    Returns:
+        请求头字典
+    """
+    headers: dict[str, str] = {
+        "Content-Type": "application/json",
+    }
+    if cf_aig_mode:
+        headers["cf-aig-authorization"] = f"Bearer {api_key}"
+    else:
+        headers["Authorization"] = f"Bearer {api_key}"
+    if extra_headers:
+        protected = {"authorization", "content-type", "cf-aig-authorization"}
+        for key, value in extra_headers.items():
+            if str(key).lower() not in protected:
+                headers[str(key)] = str(value)
+    return headers
 
 
 # 兼容别名（旧名义为"过滤占位符"，新版统一行为）

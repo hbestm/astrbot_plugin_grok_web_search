@@ -1,8 +1,8 @@
 name: astrbot_plugin_grok_web_search
 display_name: Grok联网搜索
-desc: 通过 Grok API 进行实时联网搜索，返回综合答案和来源链接，支持指令，LLM Tool和skills调用。
-version: v1.5.0
-author: piexian
-repo: https://github.com/piexian/astrbot_plugin_grok_web_search
+desc: 通过 Grok API 进行实时联网搜索，返回综合答案和来源链接，支持指令，LLM Tool和skills调用。支持通过 Cloudflare AI Gateway 代理访问。
+version: v1.5.1
+author: hbestm
+repo: https://github.com/hbestm/astrbot_plugin_grok_web_search
 astrbot_version: ">=4.9.2"
 support_platforms: []

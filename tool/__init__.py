@@ -3,6 +3,8 @@
 from .tool import (
     DEFAULT_MODEL,
     FETCH_SYSTEM_PROMPT,
+    build_api_url,
+    build_cf_aig_base_url,
     build_headers,
     build_search_time_constraints,
     build_user_content,
@@ -32,6 +34,8 @@ from .tool import (
 __all__ = [
     "DEFAULT_MODEL",
     "FETCH_SYSTEM_PROMPT",
+    "build_api_url",
+    "build_cf_aig_base_url",
     "build_headers",
     "build_search_time_constraints",
     "build_user_content",

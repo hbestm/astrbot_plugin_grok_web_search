@@ -57,6 +57,8 @@ from .tool.card_render import (
 from .tool.tool import (
     DEFAULT_JSON_SYSTEM_PROMPT,
     DEFAULT_MODEL,
+    build_api_url,
+    build_cf_aig_base_url,
     build_headers,
     build_search_time_constraints,
     normalize_api_key,
@@ -97,6 +99,10 @@ CONFIG_PATHS = {
     "max_sources": ("output_settings", "max_sources"),
     "enable_fetch": ("tool_settings", "enable_fetch"),
     "enable_skill": ("tool_settings", "enable_skill"),
+    "cf_aig_enabled": ("cf_gateway_settings", "cf_aig_enabled"),
+    "cf_account_id": ("cf_gateway_settings", "cf_account_id"),
+    "cf_gateway_id": ("cf_gateway_settings", "cf_gateway_id"),
+    "cf_api_key": ("cf_gateway_settings", "cf_api_key"),
 }
 
 CONFIG_DEFAULTS = {
@@ -123,6 +129,10 @@ CONFIG_DEFAULTS = {
     "max_sources": 5,
     "enable_fetch": False,
     "enable_skill": False,
+    "cf_aig_enabled": False,
+    "cf_account_id": "",
+    "cf_gateway_id": "",
+    "cf_api_key": "",
 }
 
 
@@ -328,23 +338,43 @@ class GrokSearchPlugin(Star):
 
     async def _validate_config(self):
         """验证必要配置，并通过 v1/models 接口检查连通性"""
-        base_url = normalize_base_url(self._cfg("base_url", ""))
-        api_key = normalize_api_key(self._cfg("api_key", ""))
-        if not base_url:
-            logger.warning(
-                f"[{PLUGIN_NAME}] 缺少 base_url 配置，请在插件设置中填写 Grok API 端点"
-            )
-            return
-        if not api_key:
-            logger.warning(
-                f"[{PLUGIN_NAME}] 缺少 api_key 配置，请在插件设置中填写 API 密钥"
-            )
-            return
+        cf_aig_enabled = self._cfg("cf_aig_enabled", False)
+        cf_account_id = self._cfg("cf_account_id", "")
+        cf_gateway_id = self._cfg("cf_gateway_id", "")
+        cf_api_key = self._cfg("cf_api_key", "")
 
-        # 通过 v1/models 接口验证连通性和密钥有效性
-        models_url = f"{base_url}/v1/models"
+        if cf_aig_enabled:
+            # CF AI Gateway 模式
+            base_url = build_cf_aig_base_url(cf_account_id, cf_gateway_id)
+            api_key = normalize_api_key(cf_api_key or self._cfg("api_key", ""))
+            if not base_url:
+                logger.warning(
+                    f"[{PLUGIN_NAME}] CF AI Gateway 模式已启用但缺少 cf_account_id 或 cf_gateway_id 配置"
+                )
+                return
+            if not api_key:
+                logger.warning(
+                    f"[{PLUGIN_NAME}] CF AI Gateway 模式已启用但缺少 API 密钥配置，请在 cf_api_key 或 api_key 中填写 CF API Token"
+                )
+                return
+        else:
+            base_url = normalize_base_url(self._cfg("base_url", ""))
+            api_key = normalize_api_key(self._cfg("api_key", ""))
+            if not base_url:
+                logger.warning(
+                    f"[{PLUGIN_NAME}] 缺少 base_url 配置，请在插件设置中填写 Grok API 端点"
+                )
+                return
+            if not api_key:
+                logger.warning(
+                    f"[{PLUGIN_NAME}] 缺少 api_key 配置，请在插件设置中填写 API 密钥"
+                )
+                return
+
+        # 通过 models 接口验证连通性和密钥有效性
+        models_url = build_api_url(base_url, "models", cf_aig_mode=cf_aig_enabled)
         extra_headers = self._parse_json_config("extra_headers")
-        headers = build_headers(api_key, extra_headers or None)
+        headers = build_headers(api_key, extra_headers or None, cf_aig_mode=cf_aig_enabled)
 
         # 获取代理配置
         proxy = self._cfg("proxy", "").strip() or None
@@ -367,7 +397,7 @@ class GrokSearchPlugin(Star):
                         )
                     elif resp.status == 404:
                         logger.warning(
-                            f"[{PLUGIN_NAME}] v1/models 端点不存在（404），请检查 base_url 配置是否正确"
+                            f"[{PLUGIN_NAME}] models 端点不存在（404），请检查 base_url 配置是否正确"
                         )
                     elif resp.status != 200:
                         logger.warning(
@@ -638,6 +668,21 @@ class GrokSearchPlugin(Star):
         try:
             proxy = self._cfg("proxy", "").strip() or None
 
+            # 解析 CF AI Gateway 配置
+            cf_aig_enabled = self._cfg("cf_aig_enabled", False)
+            cf_aig_mode = cf_aig_enabled
+            if cf_aig_enabled:
+                cf_account_id = self._cfg("cf_account_id", "")
+                cf_gateway_id = self._cfg("cf_gateway_id", "")
+                cf_api_key = self._cfg("cf_api_key", "")
+                effective_base_url = build_cf_aig_base_url(cf_account_id, cf_gateway_id)
+                effective_api_key = normalize_api_key(
+                    cf_api_key or self._cfg("api_key", "")
+                )
+            else:
+                effective_base_url = self._cfg("base_url", "")
+                effective_api_key = self._cfg("api_key", "")
+
             # 将时间约束和搜索引导注入到查询前缀
             enriched_query = query
             if time_constraints:
@@ -658,8 +703,8 @@ class GrokSearchPlugin(Star):
 
             common_kwargs = {
                 "query": enriched_query,
-                "base_url": self._cfg("base_url", ""),
-                "api_key": self._cfg("api_key", ""),
+                "base_url": effective_base_url,
+                "api_key": effective_api_key,
                 "model": mode_model,
                 "timeout": timeout,
                 "extra_body": self._parse_json_config("extra_body"),
@@ -670,6 +715,7 @@ class GrokSearchPlugin(Star):
                 "retryable_status_codes": retryable_status_codes,
                 "images": images,
                 "proxy": proxy,
+                "cf_aig_mode": cf_aig_mode,
             }
 
             if self._cfg("use_responses_api", False):
@@ -776,8 +822,20 @@ class GrokSearchPlugin(Star):
 
     def _help_text(self) -> str:
         """返回帮助文本"""
+        cf_aig_enabled = self._cfg("cf_aig_enabled", False)
+        if cf_aig_enabled:
+            cf_account_id = self._cfg("cf_account_id", "") or "未配置"
+            cf_gateway_id = self._cfg("cf_gateway_id", "") or "未配置"
+            provider_info = (
+                f"CF AI Gateway (xAI)\n"
+                f"  Account ID: {cf_account_id}\n"
+                f"  Gateway ID: {cf_gateway_id}"
+            )
+        else:
+            provider_id = self._cfg("base_url", "") or "未配置"
+            provider_info = f"直连 Grok API\n  端点: {provider_id}"
+
         mode = "自定义"
-        provider_id = self._cfg("base_url", "") or "未配置"
         model = self._cfg("model", DEFAULT_MODEL) or "默认"
         has_custom_prompt = bool((self._cfg("custom_system_prompt", "") or "").strip())
         if has_custom_prompt:
@@ -803,7 +861,7 @@ class GrokSearchPlugin(Star):
             "\n"
             f"当前配置:\n"
             f"  供应商来源: {mode}\n"
-            f"  供应商: {provider_id}\n"
+            f"  供应商: {provider_info}\n"
             f"  模型: {model}\n"
             f"  系统提示词: {prompt_info}"
         )

@@ -69,6 +69,10 @@ _CONFIG_PATHS = {
     "max_sources": ("output_settings", "max_sources"),
     "enable_fetch": ("tool_settings", "enable_fetch"),
     "enable_skill": ("tool_settings", "enable_skill"),
+    "cf_aig_enabled": ("cf_gateway_settings", "cf_aig_enabled"),
+    "cf_account_id": ("cf_gateway_settings", "cf_account_id"),
+    "cf_gateway_id": ("cf_gateway_settings", "cf_gateway_id"),
+    "cf_api_key": ("cf_gateway_settings", "cf_api_key"),
 }
 
 _CONFIG_DEFAULTS = {
@@ -95,6 +99,10 @@ _CONFIG_DEFAULTS = {
     "max_sources": 5,
     "enable_fetch": False,
     "enable_skill": False,
+    "cf_aig_enabled": False,
+    "cf_account_id": "",
+    "cf_gateway_id": "",
+    "cf_api_key": "",
 }
 
 
@@ -284,8 +292,10 @@ def _request_chat_completions(
     stream: bool = False,
     images: list[str] | None = None,
     system_prompt: str | None = None,
+    cf_aig_mode: bool = False,
 ) -> dict[str, Any]:
-    url = f"{_normalize_base_url(base_url)}/v1/chat/completions"
+    from tool import build_api_url as _build_api_url
+    url = _build_api_url(base_url, "chat/completions", cf_aig_mode=cf_aig_mode)
 
     system = system_prompt or (
         "You are a web research assistant. Use live web search/browsing when answering. "
@@ -354,6 +364,8 @@ def _request_chat_completions(
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
     }
+    if cf_aig_mode:
+        headers["cf-aig-authorization"] = headers.pop("Authorization")
     for key, value in extra_headers.items():
         headers[str(key)] = str(value)
 
@@ -391,9 +403,11 @@ def _request_responses_api(
     extra_headers: dict[str, Any],
     extra_body: dict[str, Any],
     images: list[str] | None = None,
+    cf_aig_mode: bool = False,
 ) -> dict[str, Any]:
     """通过 xAI Responses API (/v1/responses) 发起搜索请求"""
-    url = f"{_normalize_base_url(base_url)}/v1/responses"
+    from tool import build_api_url as _build_api_url
+    url = _build_api_url(base_url, "responses", cf_aig_mode=cf_aig_mode)
 
     system = (
         "You are a web research assistant. Use live web search/browsing when answering. "
@@ -455,6 +469,8 @@ def _request_responses_api(
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
     }
+    if cf_aig_mode:
+        headers["cf-aig-authorization"] = headers.pop("Authorization")
     for key, value in extra_headers.items():
         headers[str(key)] = str(value)
 
@@ -647,6 +663,22 @@ def main() -> int:
         or os.environ.get("GROK_API_KEY", "").strip()
         or str(_cfg(config, "api_key") or "").strip()
     )
+
+    # CF AI Gateway 模式解析
+    cf_aig_enabled = bool(_cfg(config, "cf_aig_enabled", False))
+    cf_aig_mode = cf_aig_enabled
+    if cf_aig_enabled:
+        cf_account_id = str(_cfg(config, "cf_account_id", "") or "").strip()
+        cf_gateway_id = str(_cfg(config, "cf_gateway_id", "") or "").strip()
+        cf_api_key = str(_cfg(config, "cf_api_key", "") or "").strip()
+        if cf_account_id and cf_gateway_id:
+            from tool import build_cf_aig_base_url as _build_cf_url
+            cf_url = _build_cf_url(cf_account_id, cf_gateway_id)
+            if cf_url:
+                base_url = cf_url
+                if cf_api_key:
+                    api_key = cf_api_key
+
     model = (
         args.model.strip()
         or os.environ.get("GROK_MODEL", "").strip()
@@ -815,6 +847,7 @@ def main() -> int:
                 extra_headers=extra_headers,
                 extra_body=extra_body,
                 images=images or None,
+                cf_aig_mode=cf_aig_mode,
             )
         else:
             # Chat Completions 模式（search 和 fetch 都用这个）
@@ -835,6 +868,7 @@ def main() -> int:
                 extra_body=extra_body,
                 images=images or None,
                 system_prompt=FETCH_SYSTEM_PROMPT if is_fetch_mode else None,
+                cf_aig_mode=cf_aig_mode,
             )
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8", errors="replace") if hasattr(e, "read") else ""

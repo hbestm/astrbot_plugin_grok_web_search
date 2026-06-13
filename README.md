@@ -1,6 +1,7 @@
 # Grok 联网搜索 (astrbot_plugin_grok_web_search)
 
 通过 Grok API 进行实时联网搜索，返回综合答案和来源链接。支持多模态图片搜索、网页内容抓取。
+支持通过 **Cloudflare AI Gateway** 代理访问 xAI/Grok，解决因网络限制无法直连的问题。
 
 ## 环境要求
 
@@ -25,7 +26,7 @@
 ### 俩种方式
 
 1. 在 AstrBot 插件市场搜索 `Grok联网搜索` 点击安装
-2. 在插件界面右下角点击加号选择从链接安装输入 ` https://github.com/piexian/astrbot_plugin_grok_web_search  `
+2. 在插件界面右下角点击加号选择从链接安装输入 ` https://github.com/hbestm/astrbot_plugin_grok_web_search `
 
 ## 配置
 
@@ -43,10 +44,27 @@
 
 | 配置项 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| `base_url` | string | 是 | Grok API 端点 URL |
-| `api_key` | string | 是 | API 密钥 |
+| `base_url` | string | 否* | Grok API 端点 URL（直连模式必填） |
+| `api_key` | string | 否* | API 密钥（直连模式必填） |
 | `timeout_seconds` | int | 否 | 超时时间（默认: 60 秒） |
 | `proxy` | string | 否 | HTTP 代理地址（例如: http://127.0.0.1:7890） |
+
+> *直连模式和 CF AI Gateway 模式二选一，至少配置一种。
+
+### Cloudflare AI Gateway 设置
+
+通过 Cloudflare AI Gateway 代理访问 xAI/Grok API，无需直连海外端点，解决网络不可达问题。
+
+| 配置项 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| `cf_aig_enabled` | bool | 是 | 启用 CF AI Gateway（开启后自动覆盖 base_url 和认证方式） |
+| `cf_account_id` | string | 是 | Cloudflare 账户 ID（Dashboard 右上角） |
+| `cf_gateway_id` | string | 是 | AI Gateway ID（未手动创建则自动使用 `default`） |
+| `cf_api_key` | string | 否 | Cloudflare API Token，留空则使用上方 `api_key` |
+
+**认证方式**：启用 CF AI Gateway 后，插件使用 `cf-aig-authorization` 请求头传递 CF API Token（BYOK 模式），不会将上游密钥透传给 Cloudflare。
+
+**免费方案**：CF AI Gateway 免费版每月 50 万次请求，xAI 也提供免费 API 额度（如 grok-4.1-fast 模型）。
 
 ### 请求设置
 

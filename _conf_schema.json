@@ -182,6 +182,34 @@
       }
     }
   },
+  "cf_gateway_settings": {
+    "type": "object",
+    "description": "Cloudflare AI Gateway 设置",
+    "hint": "通过 CF AI Gateway 代理访问 xAI/Grok，解决网络问题。启用后自动覆盖 base_url 和认证方式。",
+    "items": {
+      "cf_aig_enabled": {
+        "type": "bool",
+        "description": "启用 CF AI Gateway",
+        "hint": "开启后通过 Cloudflare AI Gateway 连接 xAI/Grok，而非直连",
+        "default": false
+      },
+      "cf_account_id": {
+        "type": "string",
+        "description": "Cloudflare 账户 ID",
+        "hint": "可在 Cloudflare Dashboard 右上角找到 Account ID"
+      },
+      "cf_gateway_id": {
+        "type": "string",
+        "description": "AI Gateway ID",
+        "hint": "在 Cloudflare AI Gateway 中创建的网关名称，如未手动创建会自动使用 default"
+      },
+      "cf_api_key": {
+        "type": "string",
+        "description": "CF API Token",
+        "hint": "Cloudflare API Token（需 AI Gateway 权限），留空则使用上方 api_key"
+      }
+    }
+  },
   "advanced_settings": {
     "type": "object",
     "description": "扩展参数",
@@ -331,6 +359,26 @@
   "enable_skill": {
     "type": "bool",
     "default": false,
+    "invisible": true
+  },
+  "cf_aig_enabled": {
+    "type": "bool",
+    "default": false,
+    "invisible": true
+  },
+  "cf_account_id": {
+    "type": "string",
+    "default": "",
+    "invisible": true
+  },
+  "cf_gateway_id": {
+    "type": "string",
+    "default": "",
+    "invisible": true
+  },
+  "cf_api_key": {
+    "type": "string",
+    "default": "",
     "invisible": true
   }
 }

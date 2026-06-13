@@ -15,6 +15,7 @@ from ..tool.tool import (
     DEFAULT_MODEL,
     FETCH_SYSTEM_PROMPT,
     IMAGE_UNSUPPORTED_ERROR,
+    build_api_url,
     build_headers,
     build_user_content,
     format_http_error,
@@ -45,6 +46,7 @@ async def grok_search(
     retryable_status_codes: set[int] | None = None,
     images: list[str] | None = None,
     proxy: str | None = None,
+    cf_aig_mode: bool = False,
 ) -> dict[str, Any]:
     """
     调用 Grok API 进行联网搜索（异步）
@@ -52,7 +54,7 @@ async def grok_search(
     Args:
         query: 搜索查询内容
         base_url: Grok API 端点
-        api_key: API 密钥
+        api_key: API 密钥（直连为 xAI Key，CF 模式为 CF API Token）
         model: 模型名称
         timeout: 超时时间（秒）
         reasoning_effort: 思考模式强度，None 不开启 / "medium" / "high"
@@ -65,6 +67,7 @@ async def grok_search(
         retryable_status_codes: 可重试的 HTTP 状态码集合，为 None 时使用默认值
         images: 可选的 base64 编码图片列表，用于构建多模态消息
         proxy: HTTP 代理地址
+        cf_aig_mode: 是否使用 Cloudflare AI Gateway 模式
 
     Returns:
         {
@@ -85,7 +88,7 @@ async def grok_search(
         return config
     base_url, api_key = config
 
-    url = f"{normalize_base_url(base_url)}/v1/chat/completions"
+    url = build_api_url(base_url, "chat/completions", cf_aig_mode=cf_aig_mode)
 
     # 使用自定义提示词或默认提示词
     final_system_prompt = (
@@ -125,7 +128,7 @@ async def grok_search(
         extra_body,
         {"model", "messages", "stream", "reasoning_effort", "reasoning_budget_tokens"},
     )
-    headers = build_headers(api_key, extra_headers)
+    headers = build_headers(api_key, extra_headers, cf_aig_mode=cf_aig_mode)
 
     def _parse_sse_response(raw_text: str) -> dict[str, Any] | None:
         """解析 SSE 流式响应，合并所有 chunk 的内容"""
@@ -295,6 +298,7 @@ async def grok_fetch(
     extra_body: dict | None = None,
     extra_headers: dict | None = None,
     proxy: str | None = None,
+    cf_aig_mode: bool = False,
 ) -> dict[str, Any]:
     """利用 Grok 联网能力抓取指定 URL 的网页内容并转为 Markdown
 
@@ -308,6 +312,7 @@ async def grok_fetch(
         extra_headers: 额外请求头
         session: 可选 aiohttp.ClientSession
         proxy: 代理地址
+        cf_aig_mode: 是否使用 Cloudflare AI Gateway 模式
 
     Returns:
         {
@@ -330,6 +335,7 @@ async def grok_fetch(
         system_prompt=FETCH_SYSTEM_PROMPT,
         max_retries=2,
         proxy=proxy,
+        cf_aig_mode=cf_aig_mode,
     )
 
     if not result.get("ok"):
