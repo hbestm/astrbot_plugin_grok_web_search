@@ -720,23 +720,6 @@ def validate_config(
     return base_url, api_key
 
 
-def build_headers(
-    api_key: str,
-    extra_headers: dict | None = None,
-) -> dict[str, str]:
-    """构建请求头，合并 extra_headers 并保护关键头"""
-    headers: dict[str, str] = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
-    }
-    if extra_headers:
-        protected = {"authorization", "content-type"}
-        for key, value in extra_headers.items():
-            if str(key).lower() not in protected:
-                headers[str(key)] = str(value)
-    return headers
-
-
 def merge_extra_body(
     body: dict[str, Any],
     extra_body: dict | None,
